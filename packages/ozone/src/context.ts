@@ -1,3 +1,4 @@
+import express from 'express'
 import * as plc from '@did-plc/lib'
 import { IdResolver } from '@atproto/identity'
 import { AtpAgent } from '@atproto/api'
@@ -17,15 +18,24 @@ import {
 import { BlobDiverter } from './daemon/blob-diverter'
 import { AuthVerifier } from './auth-verifier'
 import { ImageInvalidator } from './image-invalidator'
-import { getSigningKeyId } from './util'
+import { TeamService, TeamServiceCreator } from './team'
+import {
+  defaultLabelerHeader,
+  getSigningKeyId,
+  LABELER_HEADER_NAME,
+  ParsedLabelers,
+  parseLabelerHeader,
+} from './util'
 
 export type AppContextOptions = {
   db: Database
   cfg: OzoneConfig
   modService: ModerationServiceCreator
   communicationTemplateService: CommunicationTemplateServiceCreator
+  teamService: TeamServiceCreator
   appviewAgent: AtpAgent
   pdsAgent: AtpAgent | undefined
+  chatAgent: AtpAgent | undefined
   blobDiverter?: BlobDiverter
   signingKey: Keypair
   signingKeyId: number
@@ -37,7 +47,10 @@ export type AppContextOptions = {
 }
 
 export class AppContext {
-  constructor(private opts: AppContextOptions, private secrets: OzoneSecrets) {}
+  constructor(
+    private opts: AppContextOptions,
+    private secrets: OzoneSecrets,
+  ) {}
 
   static async fromConfig(
     cfg: OzoneConfig,
@@ -56,6 +69,9 @@ export class AppContext {
     const appviewAgent = new AtpAgent({ service: cfg.appview.url })
     const pdsAgent = cfg.pds
       ? new AtpAgent({ service: cfg.pds.url })
+      : undefined
+    const chatAgent = cfg.chat
+      ? new AtpAgent({ service: cfg.chat.url })
       : undefined
 
     const idResolver = new IdResolver({
@@ -93,15 +109,14 @@ export class AppContext {
     )
 
     const communicationTemplateService = CommunicationTemplateService.creator()
+    const teamService = TeamService.creator()
 
     const sequencer = new Sequencer(modService(db))
 
     const authVerifier = new AuthVerifier(idResolver, {
       serviceDid: cfg.service.did,
-      admins: cfg.access.admins,
-      moderators: cfg.access.moderators,
-      triage: cfg.access.triage,
       adminPassword: secrets.adminPassword,
+      teamService: teamService(db),
     })
 
     return new AppContext(
@@ -110,8 +125,10 @@ export class AppContext {
         cfg,
         modService,
         communicationTemplateService,
+        teamService,
         appviewAgent,
         pdsAgent,
+        chatAgent,
         signingKey,
         signingKeyId,
         idResolver,
@@ -153,12 +170,20 @@ export class AppContext {
     return this.opts.communicationTemplateService
   }
 
+  get teamService(): TeamServiceCreator {
+    return this.opts.teamService
+  }
+
   get appviewAgent(): AtpAgent {
     return this.opts.appviewAgent
   }
 
   get pdsAgent(): AtpAgent | undefined {
     return this.opts.pdsAgent
+  }
+
+  get chatAgent(): AtpAgent | undefined {
+    return this.opts.chatAgent
   }
 
   get signingKey(): Keypair {
@@ -209,11 +234,30 @@ export class AppContext {
     return this.serviceAuthHeaders(this.cfg.appview.did)
   }
 
+  async chatAuth() {
+    if (!this.cfg.chat) {
+      throw new Error('No chat service configured')
+    }
+    return this.serviceAuthHeaders(this.cfg.chat.did)
+  }
+
   devOverride(overrides: Partial<AppContextOptions>) {
     this.opts = {
       ...this.opts,
       ...overrides,
     }
+  }
+
+  reqLabelers(req: express.Request): ParsedLabelers {
+    const val = req.header(LABELER_HEADER_NAME)
+    let parsed: ParsedLabelers | null
+    try {
+      parsed = parseLabelerHeader(val, this.cfg.service.did)
+    } catch (err) {
+      parsed = null
+    }
+    if (!parsed) return defaultLabelerHeader([])
+    return parsed
   }
 }
 export default AppContext

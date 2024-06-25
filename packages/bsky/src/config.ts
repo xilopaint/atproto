@@ -7,6 +7,7 @@ export interface ServerConfigValues {
   port?: number
   publicUrl?: string
   serverDid: string
+  alternateAudienceDids: string[]
   // external services
   dataplaneUrls: string[]
   dataplaneHttpVersion?: '1.1' | '2'
@@ -20,6 +21,8 @@ export interface ServerConfigValues {
   courierHttpVersion?: '1.1' | '2'
   courierIgnoreBadTls?: boolean
   searchUrl?: string
+  suggestionsUrl?: string
+  suggestionsApiKey?: string
   cdnUrl?: string
   blobRateLimitBypassKey?: string
   blobRateLimitBypassHostname?: string
@@ -46,6 +49,9 @@ export class ServerConfig {
     const envPort = parseInt(process.env.BSKY_PORT || '', 10)
     const port = isNaN(envPort) ? 2584 : envPort
     const didPlcUrl = process.env.BSKY_DID_PLC_URL || 'http://localhost:2582'
+    const alternateAudienceDids = process.env.BSKY_ALT_AUDIENCE_DIDS
+      ? process.env.BSKY_ALT_AUDIENCE_DIDS.split(',')
+      : []
     const handleResolveNameservers = process.env.BSKY_HANDLE_RESOLVE_NAMESERVERS
       ? process.env.BSKY_HANDLE_RESOLVE_NAMESERVERS.split(',')
       : []
@@ -55,6 +61,8 @@ export class ServerConfig {
       process.env.BSKY_SEARCH_URL ||
       process.env.BSKY_SEARCH_ENDPOINT ||
       undefined
+    const suggestionsUrl = process.env.BSKY_SUGGESTIONS_URL || undefined
+    const suggestionsApiKey = process.env.BSKY_SUGGESTIONS_API_KEY || undefined
     let dataplaneUrls = overrides?.dataplaneUrls
     dataplaneUrls ??= process.env.BSKY_DATAPLANE_URLS
       ? process.env.BSKY_DATAPLANE_URLS.split(',')
@@ -100,10 +108,13 @@ export class ServerConfig {
       port,
       publicUrl,
       serverDid,
+      alternateAudienceDids,
       dataplaneUrls,
       dataplaneHttpVersion,
       dataplaneIgnoreBadTls,
       searchUrl,
+      suggestionsUrl,
+      suggestionsApiKey,
       didPlcUrl,
       labelsFromIssuerDids,
       handleResolveNameservers,
@@ -158,6 +169,10 @@ export class ServerConfig {
     return this.cfg.serverDid
   }
 
+  get alternateAudienceDids() {
+    return this.cfg.alternateAudienceDids
+  }
+
   get dataplaneUrls() {
     return this.cfg.dataplaneUrls
   }
@@ -204,6 +219,14 @@ export class ServerConfig {
 
   get searchUrl() {
     return this.cfg.searchUrl
+  }
+
+  get suggestionsUrl() {
+    return this.cfg.suggestionsUrl
+  }
+
+  get suggestionsApiKey() {
+    return this.cfg.suggestionsApiKey
   }
 
   get cdnUrl() {

@@ -183,7 +183,33 @@ export class Server {
     )
   }
 
-  async catchall(req: Request, _res: Response, next: NextFunction) {
+  async catchall(req: Request, res: Response, next: NextFunction) {
+    if (this.globalRateLimiters) {
+      try {
+        const rlRes = await consumeMany(
+          {
+            req,
+            res,
+            auth: undefined,
+            params: {},
+            input: undefined,
+          },
+          this.globalRateLimiters.map(
+            (rl) => (ctx: XRPCReqContext) => rl.consume(ctx),
+          ),
+        )
+        if (rlRes instanceof RateLimitExceededError) {
+          return next(rlRes)
+        }
+      } catch (err) {
+        return next(err)
+      }
+    }
+
+    if (this.options.catchall) {
+      return this.options.catchall(req, res, next)
+    }
+
     const def = this.lex.getDef(req.params.methodId)
     if (!def) {
       return next(new MethodNotImplementedError())

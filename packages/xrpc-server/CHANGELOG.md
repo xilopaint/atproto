@@ -1,5 +1,17 @@
 # @atproto/xrpc-server
 
+## 0.5.2
+
+### Patch Changes
+
+- [`615a96ddc`](https://github.com/bluesky-social/atproto/commit/615a96ddc2965251cfab060dfc43fc1a51ef4bff) Thanks [@devinivy](https://github.com/devinivy)! - Adjust detection of lexrpc body presence, support 0-byte bodies.
+
+## 0.5.1
+
+### Patch Changes
+
+- [#2384](https://github.com/bluesky-social/atproto/pull/2384) [`cd4fcc709`](https://github.com/bluesky-social/atproto/commit/cd4fcc709fe8d725a4af769ce21f53711fe5622a) Thanks [@dholms](https://github.com/dholms)! - Add configurable catchall
+
 ## 0.5.0
 
 ### Minor Changes

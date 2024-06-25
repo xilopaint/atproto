@@ -13,6 +13,7 @@ describe('pds views with blocking', () => {
   let carolReplyToDan: { ref: RecordRef }
 
   let alice: string
+  let bob: string
   let carol: string
   let dan: string
   let danBlockUri: string
@@ -26,6 +27,7 @@ describe('pds views with blocking', () => {
     sc = network.getSeedClient()
     await basicSeed(sc)
     alice = sc.dids.alice
+    bob = sc.dids.bob
     carol = sc.dids.carol
     dan = sc.dids.dan
     // add follows to ensure blocks work even w follows
@@ -36,6 +38,12 @@ describe('pds views with blocking', () => {
       sc.posts[dan][0].ref,
       sc.posts[dan][0].ref,
       'alice replies to dan',
+    )
+    const _carolReplyToAliceReplyToDan = await sc.reply(
+      carol,
+      sc.posts[dan][0].ref,
+      aliceReplyToDan.ref,
+      "carol replies to alice's reply to dan",
     )
     carolReplyToDan = await sc.reply(
       carol,
@@ -160,8 +168,15 @@ describe('pds views with blocking', () => {
       { limit: 100 },
       { headers: await network.serviceHeaders(carol) },
     )
+
+    // dan's posts don't appear, nor alice's reply to dan, nor carol's reply to alice (which was a reply to dan)
     expect(
-      resCarol.data.feed.some((post) => post.post.author.did === dan),
+      resCarol.data.feed.some(
+        (post) =>
+          post.post.author.did === dan ||
+          post.reply?.parent.author?.['did'] === dan ||
+          post.reply?.grandparentAuthor?.did === dan,
+      ),
     ).toBeFalsy()
 
     const resDan = await agent.api.app.bsky.feed.getTimeline(
@@ -169,7 +184,12 @@ describe('pds views with blocking', () => {
       { headers: await network.serviceHeaders(dan) },
     )
     expect(
-      resDan.data.feed.some((post) => post.post.author.did === carol),
+      resDan.data.feed.some(
+        (post) =>
+          post.post.author.did === carol ||
+          post.reply?.parent.author?.['did'] === carol ||
+          post.reply?.grandparentAuthor?.did === carol,
+      ),
     ).toBeFalsy()
   })
 
@@ -516,6 +536,7 @@ describe('pds views with blocking', () => {
   it('applies third-party blocking rules in feeds.', async () => {
     // alice follows carol and dan, block exists between carol and dan.
     const replyBlockedUri = carolReplyToDan.ref.uriStr
+    const replyBlockedParentUri = sc.posts[dan][0].ref.uriStr
     const embedBlockedUri = sc.posts[dan][1].ref.uriStr
     const { data: timeline } = await agent.api.app.bsky.feed.getTimeline(
       { limit: 100 },
@@ -524,8 +545,16 @@ describe('pds views with blocking', () => {
     const replyBlockedPost = timeline.feed.find(
       (item) => item.post.uri === replyBlockedUri,
     )
-    assert(replyBlockedPost)
-    expect(replyBlockedPost.reply?.parent).toBeUndefined()
+    expect(replyBlockedPost?.reply).toMatchObject({
+      root: {
+        $type: 'app.bsky.feed.defs#blockedPost',
+        uri: replyBlockedParentUri,
+      },
+      parent: {
+        $type: 'app.bsky.feed.defs#blockedPost',
+        uri: replyBlockedParentUri,
+      },
+    })
     const embedBlockedPost = timeline.feed.find(
       (item) => item.post.uri === embedBlockedUri,
     )
@@ -567,5 +596,16 @@ describe('pds views with blocking', () => {
     )
     const combined = [...first.data.blocks, ...second.data.blocks]
     expect(combined).toEqual(full.data.blocks)
+  })
+
+  it('returns knownFollowers with blocks filtered', async () => {
+    const carolForAlice = await agent.api.app.bsky.actor.getProfile(
+      { actor: bob },
+      { headers: await network.serviceHeaders(alice) },
+    )
+
+    const knownFollowers = carolForAlice.data.viewer?.knownFollowers
+    expect(knownFollowers?.count).toBe(1)
+    expect(knownFollowers?.followers).toHaveLength(0)
   })
 })

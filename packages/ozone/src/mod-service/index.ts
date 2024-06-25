@@ -48,6 +48,7 @@ import { formatLabel, formatLabelRow, signLabel } from './util'
 import { ImageInvalidator } from '../image-invalidator'
 import { httpLogger as log } from '../logger'
 import { OzoneConfig } from '../config'
+import { LABELER_HEADER_NAME, ParsedLabelers } from '../util'
 
 export type ModerationServiceCreator = (db: Database) => ModerationService
 
@@ -96,7 +97,13 @@ export class ModerationService {
     this.signingKey,
     this.signingKeyId,
     this.appviewAgent,
-    () => this.createAuthHeaders(this.cfg.appview.did),
+    async (labelers?: ParsedLabelers) => {
+      const authHeaders = await this.createAuthHeaders(this.cfg.appview.did)
+      if (labelers?.dids?.length) {
+        authHeaders.headers[LABELER_HEADER_NAME] = labelers.dids.join(', ')
+      }
+      return authHeaders
+    },
   )
 
   async getEvent(id: number): Promise<ModerationEventRow | undefined> {
@@ -310,6 +317,14 @@ export class ModerationService {
       }
     }
 
+    // Keep trace of reports that came in while the reporter was in muted stated
+    if (isModEventReport(event)) {
+      const isReportingMuted = await this.isReportingMutedForSubject(createdBy)
+      if (isReportingMuted) {
+        meta.isReporterMuted = true
+      }
+    }
+
     const subjectInfo = subject.info()
 
     const modEvent = await this.db.db
@@ -326,7 +341,7 @@ export class ModerationService {
         durationInHours: event.durationInHours
           ? Number(event.durationInHours)
           : null,
-        meta,
+        meta: Object.assign(meta, subjectInfo.meta),
         expiresAt:
           (isModEventTakedown(event) || isModEventMute(event)) &&
           event.durationInHours
@@ -337,6 +352,7 @@ export class ModerationService {
         subjectUri: subjectInfo.subjectUri,
         subjectCid: subjectInfo.subjectCid,
         subjectBlobCids: jsonb(subjectInfo.subjectBlobCids),
+        subjectMessageId: subjectInfo.subjectMessageId,
       })
       .returningAll()
       .executeTakeFirstOrThrow()
@@ -668,6 +684,7 @@ export class ModerationService {
     reportedAfter,
     reportedBefore,
     includeMuted,
+    onlyMuted,
     ignoreSubjects,
     sortDirection,
     lastReviewedBy,
@@ -686,6 +703,7 @@ export class ModerationService {
     reportedAfter?: string
     reportedBefore?: string
     includeMuted?: boolean
+    onlyMuted?: boolean
     subject?: string
     ignoreSubjects?: string[]
     sortDirection: 'asc' | 'desc'
@@ -757,9 +775,19 @@ export class ModerationService {
       )
     }
 
+    if (onlyMuted) {
+      builder = builder.where((qb) =>
+        qb
+          .where('muteUntil', '>', new Date().toISOString())
+          .orWhere('muteReportingUntil', '>', new Date().toISOString()),
+      )
+    }
+
     if (tags.length) {
       builder = builder.where(
-        sql`${ref('moderation_subject_status.tags')} @> ${jsonb(tags)}`,
+        sql`${ref('moderation_subject_status.tags')} ?| array[${sql.join(
+          tags,
+        )}]::TEXT[]`,
       )
     }
 
@@ -767,9 +795,9 @@ export class ModerationService {
       builder = builder.where((qb) =>
         qb
           .where(
-            sql`NOT(${ref('moderation_subject_status.tags')} @> ${jsonb(
-              excludeTags,
-            )})`,
+            sql`NOT(${ref(
+              'moderation_subject_status.tags',
+            )} ?| array[${sql.join(excludeTags)}]::TEXT[])`,
           )
           .orWhere('tags', 'is', null),
       )
@@ -787,7 +815,6 @@ export class ModerationService {
       tryIndex: true,
       nullsLast: true,
     })
-
     const results = await paginatedBuilder.execute()
 
     const infos = await this.views.getAccoutInfosByDid(
@@ -814,6 +841,20 @@ export class ModerationService {
       .selectAll()
       .executeTakeFirst()
     return result ?? null
+  }
+
+  // This is used to check if the reporter of an incoming report is muted from reporting
+  // so we want to make sure this look up is as fast as possible
+  async isReportingMutedForSubject(did: string) {
+    const result = await this.db.db
+      .selectFrom('moderation_subject_status')
+      .where('did', '=', did)
+      .where('recordPath', '=', '')
+      .where('muteReportingUntil', '>', new Date().toISOString())
+      .select(sql`true`.as('status'))
+      .executeTakeFirst()
+
+    return !!result
   }
 
   async formatAndCreateLabels(

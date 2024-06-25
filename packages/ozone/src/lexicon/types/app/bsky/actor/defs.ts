@@ -16,6 +16,7 @@ export interface ProfileViewBasic {
   associated?: ProfileAssociated
   viewer?: ViewerState
   labels?: ComAtprotoLabelDefs.Label[]
+  createdAt?: string
   [k: string]: unknown
 }
 
@@ -39,6 +40,7 @@ export interface ProfileView {
   avatar?: string
   associated?: ProfileAssociated
   indexedAt?: string
+  createdAt?: string
   viewer?: ViewerState
   labels?: ComAtprotoLabelDefs.Label[]
   [k: string]: unknown
@@ -67,7 +69,9 @@ export interface ProfileViewDetailed {
   followsCount?: number
   postsCount?: number
   associated?: ProfileAssociated
+  joinedViaStarterPack?: AppBskyGraphDefs.StarterPackViewBasic
   indexedAt?: string
+  createdAt?: string
   viewer?: ViewerState
   labels?: ComAtprotoLabelDefs.Label[]
   [k: string]: unknown
@@ -88,7 +92,9 @@ export function validateProfileViewDetailed(v: unknown): ValidationResult {
 export interface ProfileAssociated {
   lists?: number
   feedgens?: number
+  starterPacks?: number
   labeler?: boolean
+  chat?: ProfileAssociatedChat
   [k: string]: unknown
 }
 
@@ -104,6 +110,25 @@ export function validateProfileAssociated(v: unknown): ValidationResult {
   return lexicons.validate('app.bsky.actor.defs#profileAssociated', v)
 }
 
+export interface ProfileAssociatedChat {
+  allowIncoming: 'all' | 'none' | 'following' | (string & {})
+  [k: string]: unknown
+}
+
+export function isProfileAssociatedChat(
+  v: unknown,
+): v is ProfileAssociatedChat {
+  return (
+    isObj(v) &&
+    hasProp(v, '$type') &&
+    v.$type === 'app.bsky.actor.defs#profileAssociatedChat'
+  )
+}
+
+export function validateProfileAssociatedChat(v: unknown): ValidationResult {
+  return lexicons.validate('app.bsky.actor.defs#profileAssociatedChat', v)
+}
+
 /** Metadata about the requesting account's relationship with the subject account. Only has meaningful content for authed requests. */
 export interface ViewerState {
   muted?: boolean
@@ -113,6 +138,7 @@ export interface ViewerState {
   blockingByList?: AppBskyGraphDefs.ListViewBasic
   following?: string
   followedBy?: string
+  knownFollowers?: KnownFollowers
   [k: string]: unknown
 }
 
@@ -128,10 +154,30 @@ export function validateViewerState(v: unknown): ValidationResult {
   return lexicons.validate('app.bsky.actor.defs#viewerState', v)
 }
 
+/** The subject's followers whom you also follow */
+export interface KnownFollowers {
+  count: number
+  followers: ProfileViewBasic[]
+  [k: string]: unknown
+}
+
+export function isKnownFollowers(v: unknown): v is KnownFollowers {
+  return (
+    isObj(v) &&
+    hasProp(v, '$type') &&
+    v.$type === 'app.bsky.actor.defs#knownFollowers'
+  )
+}
+
+export function validateKnownFollowers(v: unknown): ValidationResult {
+  return lexicons.validate('app.bsky.actor.defs#knownFollowers', v)
+}
+
 export type Preferences = (
   | AdultContentPref
   | ContentLabelPref
   | SavedFeedsPref
+  | SavedFeedsPrefV2
   | PersonalDetailsPref
   | FeedViewPref
   | ThreadViewPref
@@ -176,6 +222,43 @@ export function isContentLabelPref(v: unknown): v is ContentLabelPref {
 
 export function validateContentLabelPref(v: unknown): ValidationResult {
   return lexicons.validate('app.bsky.actor.defs#contentLabelPref', v)
+}
+
+export interface SavedFeed {
+  id: string
+  type: 'feed' | 'list' | 'timeline' | (string & {})
+  value: string
+  pinned: boolean
+  [k: string]: unknown
+}
+
+export function isSavedFeed(v: unknown): v is SavedFeed {
+  return (
+    isObj(v) &&
+    hasProp(v, '$type') &&
+    v.$type === 'app.bsky.actor.defs#savedFeed'
+  )
+}
+
+export function validateSavedFeed(v: unknown): ValidationResult {
+  return lexicons.validate('app.bsky.actor.defs#savedFeed', v)
+}
+
+export interface SavedFeedsPrefV2 {
+  items: SavedFeed[]
+  [k: string]: unknown
+}
+
+export function isSavedFeedsPrefV2(v: unknown): v is SavedFeedsPrefV2 {
+  return (
+    isObj(v) &&
+    hasProp(v, '$type') &&
+    v.$type === 'app.bsky.actor.defs#savedFeedsPrefV2'
+  )
+}
+
+export function validateSavedFeedsPrefV2(v: unknown): ValidationResult {
+  return lexicons.validate('app.bsky.actor.defs#savedFeedsPrefV2', v)
 }
 
 export interface SavedFeedsPref {

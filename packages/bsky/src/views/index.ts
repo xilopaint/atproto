@@ -2,6 +2,7 @@ import { AtUri, INVALID_HANDLE, normalizeDatetimeAlways } from '@atproto/syntax'
 import { mapDefined } from '@atproto/common'
 import { ImageUriBuilder } from '../image/uri'
 import { HydrationState } from '../hydration/hydrator'
+import { ProfileViewerState as HydratorProfileViewerState } from '../hydration/actor'
 import { ids } from '../lexicon/lexicons'
 import {
   ProfileViewDetailed,
@@ -16,10 +17,18 @@ import {
   NotFoundPost,
   PostView,
   ReasonRepost,
+  ReplyRef,
   ThreadViewPost,
   ThreadgateView,
+  isPostView,
 } from '../lexicon/types/app/bsky/feed/defs'
-import { ListView, ListViewBasic } from '../lexicon/types/app/bsky/graph/defs'
+import { isRecord as isPostRecord } from '../lexicon/types/app/bsky/feed/post'
+import {
+  ListView,
+  ListViewBasic,
+  StarterPackView,
+  StarterPackViewBasic,
+} from '../lexicon/types/app/bsky/graph/defs'
 import { creatorFromUri, parseThreadGate, cidFromBlobJson } from './util'
 import { isListRule } from '../lexicon/types/app/bsky/feed/threadgate'
 import { isSelfLabels } from '../lexicon/types/com/atproto/label/defs'
@@ -60,8 +69,21 @@ export class Views {
   // Actor
   // ------------
 
+  actorIsNoHosted(did: string, state: HydrationState): boolean {
+    return (
+      this.actorIsDeactivated(did, state) || this.actorIsTakendown(did, state)
+    )
+  }
+
+  actorIsDeactivated(did: string, state: HydrationState): boolean {
+    if (state.actors?.get(did)?.upstreamStatus === 'deactivated') return true
+    return false
+  }
+
   actorIsTakendown(did: string, state: HydrationState): boolean {
     if (state.actors?.get(did)?.takedownRef) return true
+    if (state.actors?.get(did)?.upstreamStatus === 'takendown') return true
+    if (state.actors?.get(did)?.upstreamStatus === 'suspended') return true
     if (state.labels?.get(did)?.isTakendown) return true
     return false
   }
@@ -91,9 +113,19 @@ export class Views {
     if (!actor) return
     const baseView = this.profile(did, state)
     if (!baseView) return
+    const knownFollowersSkeleton = state.knownFollowers?.get(did)
+    const knownFollowers = knownFollowersSkeleton
+      ? this.knownFollowers(knownFollowersSkeleton, state)
+      : undefined
     const profileAggs = state.profileAggs?.get(did)
     return {
       ...baseView,
+      viewer: baseView.viewer
+        ? {
+            ...baseView.viewer,
+            knownFollowers,
+          }
+        : undefined,
       banner: actor.profile?.banner
         ? this.imgUriBuilder.getPresetUri(
             'banner',
@@ -101,14 +133,22 @@ export class Views {
             cidFromBlobJson(actor.profile.banner),
           )
         : undefined,
-      followersCount: profileAggs?.followers,
-      followsCount: profileAggs?.follows,
-      postsCount: profileAggs?.posts,
+      followersCount: profileAggs?.followers ?? 0,
+      followsCount: profileAggs?.follows ?? 0,
+      postsCount: profileAggs?.posts ?? 0,
       associated: {
         lists: profileAggs?.lists,
         feedgens: profileAggs?.feeds,
-        labeler: actor?.isLabeler,
+        starterPacks: profileAggs?.starterPacks,
+        labeler: actor.isLabeler,
+        // @TODO apply default chat policy?
+        chat: actor.allowIncomingChatsFrom
+          ? { allowIncoming: actor.allowIncomingChatsFrom }
+          : undefined,
       },
+      joinedViaStarterPack: actor.profile?.joinedViaStarterPack
+        ? this.starterPackBasic(actor.profile.joinedViaStarterPack.uri, state)
+        : undefined,
     }
   }
 
@@ -157,9 +197,19 @@ export class Views {
         : undefined,
       // associated.feedgens and associated.lists info not necessarily included
       // on profile and profile-basic views, but should be on profile-detailed.
-      associated: actor?.isLabeler ? { labeler: true } : undefined,
+      associated:
+        actor.isLabeler || actor.allowIncomingChatsFrom
+          ? {
+              labeler: actor.isLabeler ? true : undefined,
+              // @TODO apply default chat policy?
+              chat: actor.allowIncomingChatsFrom
+                ? { allowIncoming: actor.allowIncomingChatsFrom }
+                : undefined,
+            }
+          : undefined,
       viewer: this.profileViewer(did, state),
       labels,
+      createdAt: actor.createdAt?.toISOString(),
     }
   }
 
@@ -185,6 +235,19 @@ export class Views {
       following: viewer.following && !block ? viewer.following : undefined,
       followedBy: viewer.followedBy && !block ? viewer.followedBy : undefined,
     }
+  }
+
+  knownFollowers(
+    knownFollowers: Required<HydratorProfileViewerState>['knownFollowers'],
+    state: HydrationState,
+  ) {
+    const followers = mapDefined(knownFollowers.followers, (did) => {
+      if (this.viewerBlockExists(did, state)) {
+        return undefined
+      }
+      return this.profileBasic(did, state)
+    })
+    return { count: knownFollowers.count, followers }
   }
 
   blockedProfileViewer(
@@ -227,6 +290,7 @@ export class Views {
     if (!list) {
       return undefined
     }
+    const listAgg = state.listAggs?.get(uri)
     const listViewer = state.listViewers?.get(uri)
     const labels = state.labels?.getBySubject(uri) ?? []
     const creator = new AtUri(uri).hostname
@@ -242,6 +306,7 @@ export class Views {
             cidFromBlobJson(list.record.avatar),
           )
         : undefined,
+      listItemCount: listAgg?.listItems ?? 0,
       indexedAt: list.sortedAt.toISOString(),
       labels,
       viewer: listViewer
@@ -250,6 +315,53 @@ export class Views {
             blocked: listViewer.viewerListBlockUri,
           }
         : undefined,
+    }
+  }
+
+  starterPackBasic(
+    uri: string,
+    state: HydrationState,
+  ): StarterPackViewBasic | undefined {
+    const sp = state.starterPacks?.get(uri)
+    if (!sp) return
+    const parsedUri = new AtUri(uri)
+    const creator = this.profileBasic(parsedUri.hostname, state)
+    if (!creator) return
+    const agg = state.starterPackAggs?.get(uri)
+    const labels = state.labels?.getBySubject(uri) ?? []
+    return {
+      uri,
+      cid: sp.cid,
+      record: sp.record,
+      creator,
+      joinedAllTimeCount: agg?.joinedAllTime ?? 0,
+      joinedWeekCount: agg?.joinedWeek ?? 0,
+      labels,
+      indexedAt: sp.sortedAt.toISOString(),
+    }
+  }
+
+  starterPack(uri: string, state: HydrationState): StarterPackView | undefined {
+    const sp = state.starterPacks?.get(uri)
+    const basicView = this.starterPackBasic(uri, state)
+    if (!sp || !basicView) return
+    const agg = state.starterPackAggs?.get(uri)
+    const feeds = mapDefined(sp.record.feeds ?? [], (feed) =>
+      this.feedGenerator(feed.uri, state),
+    )
+    const list = this.listBasic(sp.record.list, state)
+    const listItemsSample = mapDefined(agg?.listItemSampleUris ?? [], (uri) => {
+      const li = state.listItems?.get(uri)
+      if (!li) return
+      const subject = this.profile(li.record.subject, state)
+      if (!subject) return
+      return { uri, subject }
+    })
+    return {
+      ...basicView,
+      feeds,
+      list,
+      listItemsSample,
     }
   }
 
@@ -296,7 +408,7 @@ export class Views {
       uri,
       cid: labeler.cid.toString(),
       creator,
-      likeCount: aggs?.likes,
+      likeCount: aggs?.likes ?? 0,
       viewer: viewer
         ? {
             like: viewer.like,
@@ -333,16 +445,28 @@ export class Views {
     originatorBlocked: boolean
     authorMuted: boolean
     authorBlocked: boolean
+    ancestorAuthorBlocked: boolean
   } {
     const authorDid = creatorFromUri(item.post.uri)
     const originatorDid = item.repost
       ? creatorFromUri(item.repost.uri)
       : authorDid
+    const post = state.posts?.get(item.post.uri)
+    const parentUri = post?.record.reply?.parent.uri
+    const parentAuthorDid = parentUri && creatorFromUri(parentUri)
+    const parent = parentUri ? state.posts?.get(parentUri) : undefined
+    const grandparentUri = parent?.record.reply?.parent.uri
+    const grandparentAuthorDid =
+      grandparentUri && creatorFromUri(grandparentUri)
     return {
       originatorMuted: this.viewerMuteExists(originatorDid, state),
       originatorBlocked: this.viewerBlockExists(originatorDid, state),
       authorMuted: this.viewerMuteExists(authorDid, state),
       authorBlocked: this.viewerBlockExists(authorDid, state),
+      ancestorAuthorBlocked:
+        (!!parentAuthorDid && this.viewerBlockExists(parentAuthorDid, state)) ||
+        (!!grandparentAuthorDid &&
+          this.viewerBlockExists(grandparentAuthorDid, state)),
     }
   }
 
@@ -371,7 +495,7 @@ export class Views {
             cidFromBlobJson(feedgen.record.avatar),
           )
         : undefined,
-      likeCount: aggs?.likes,
+      likeCount: aggs?.likes ?? 0,
       labels,
       viewer: viewer
         ? {
@@ -427,14 +551,15 @@ export class Views {
         depth < 2 && post.record.embed
           ? this.embed(uri, post.record.embed, state, depth + 1)
           : undefined,
-      replyCount: aggs?.replies,
-      repostCount: aggs?.reposts,
-      likeCount: aggs?.likes,
+      replyCount: aggs?.replies ?? 0,
+      repostCount: aggs?.reposts ?? 0,
+      likeCount: aggs?.likes ?? 0,
       indexedAt: post.sortedAt.toISOString(),
       viewer: viewer
         ? {
             repost: viewer.repost,
             like: viewer.like,
+            threadMuted: viewer.threadMuted,
             replyDisabled: this.userReplyDisabled(uri, state),
           }
         : undefined,
@@ -469,35 +594,39 @@ export class Views {
     }
   }
 
-  replyRef(uri: string, state: HydrationState, usePostViewUnion = false) {
-    // don't hydrate reply if there isn't it violates a block
-    if (state.postBlocks?.get(uri)?.reply) return undefined
+  replyRef(uri: string, state: HydrationState): ReplyRef | undefined {
     const postRecord = state.posts?.get(uri.toString())?.record
     if (!postRecord?.reply) return
-    const root = this.maybePost(
-      postRecord.reply.root.uri,
-      state,
-      usePostViewUnion,
-    )
-    const parent = this.maybePost(
-      postRecord.reply.parent.uri,
-      state,
-      usePostViewUnion,
-    )
-    return root && parent ? { root, parent } : undefined
+    let root = this.maybePost(postRecord.reply.root.uri, state)
+    let parent = this.maybePost(postRecord.reply.parent.uri, state)
+    if (state.postBlocks?.get(uri)?.reply && isPostView(parent)) {
+      parent = this.blockedPost(parent.uri, parent.author.did, state)
+      // in a reply to the root of a thread, parent and root are the same post.
+      if (root.uri === parent.uri) {
+        root = parent
+      }
+    }
+    let grandparentAuthor: ProfileViewBasic | undefined
+    if (isPostRecord(parent.record) && parent.record.reply) {
+      grandparentAuthor = this.profileBasic(
+        creatorFromUri(parent.record.reply.parent.uri),
+        state,
+      )
+    }
+    return {
+      root,
+      parent,
+      grandparentAuthor,
+    }
   }
 
-  maybePost(
-    uri: string,
-    state: HydrationState,
-    usePostViewUnion = false,
-  ): MaybePostView | undefined {
+  maybePost(uri: string, state: HydrationState): MaybePostView {
     const post = this.post(uri, state)
-    if (!post) return usePostViewUnion ? this.notFoundPost(uri) : undefined
+    if (!post) {
+      return this.notFoundPost(uri)
+    }
     if (this.viewerBlockExists(post.author.did, state)) {
-      return usePostViewUnion
-        ? this.blockedPost(uri, post.author.did, state)
-        : undefined
+      return this.blockedPost(uri, post.author.did, state)
     }
     return {
       $type: 'app.bsky.feed.defs#postView',
@@ -622,7 +751,7 @@ export class Views {
     childrenByParentUri: Record<string, string[]>,
     state: HydrationState,
     depth: number,
-  ): (ThreadViewPost | NotFoundPost | BlockedPost)[] | undefined {
+  ): (ThreadViewPost | BlockedPost)[] | undefined {
     if (depth < 1) return undefined
     const childrenUris = childrenByParentUri[parentUri] ?? []
     return mapDefined(childrenUris, (uri) => {
@@ -634,7 +763,12 @@ export class Views {
         return undefined
       }
       const post = this.post(uri, state)
-      if (!postInfo || !post) return this.notFoundPost(uri)
+      if (!postInfo || !post) {
+        // in the future we might consider keeping a placeholder for deleted
+        // posts that have replies under them, but not supported at the moment.
+        // this case is mostly likely hit when a takedown was applied to a post.
+        return undefined
+      }
       if (rootUri !== getRootUri(uri, postInfo)) return // outside thread boundary
       if (this.viewerBlockExists(post.author.did, state)) {
         return this.blockedPost(uri, post.author.did, state)
@@ -759,6 +893,9 @@ export class Views {
       author: postView.author,
       value: postView.record,
       labels: postView.labels,
+      likeCount: postView.likeCount,
+      replyCount: postView.replyCount,
+      repostCount: postView.repostCount,
       indexedAt: postView.indexedAt,
       embeds: depth > 1 ? undefined : postView.embed ? [postView.embed] : [],
     }
@@ -887,6 +1024,17 @@ export class Views {
       recordInfo = state.reposts?.get(notif.uri)
     } else if (uri.collection === ids.AppBskyGraphFollow) {
       recordInfo = state.follows?.get(notif.uri)
+    } else if (uri.collection === ids.AppBskyActorProfile) {
+      const actor = state.actors?.get(authorDid)
+      recordInfo =
+        actor && actor.profile && actor.profileCid && actor.sortedAt
+          ? {
+              record: actor.profile,
+              cid: actor.profileCid,
+              sortedAt: actor.sortedAt,
+              takedownRef: actor.profileTakedownRef,
+            }
+          : null
     }
     if (!recordInfo) return
     const labels = state.labels?.getBySubject(notif.uri) ?? []

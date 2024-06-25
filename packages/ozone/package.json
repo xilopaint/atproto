@@ -1,6 +1,6 @@
 {
   "name": "@atproto/ozone",
-  "version": "0.1.5",
+  "version": "0.1.27",
   "license": "MIT",
   "description": "Backend service for moderating the Bluesky network.",
   "keywords": [
@@ -17,7 +17,7 @@
   "types": "dist/index.d.ts",
   "bin": "dist/bin.js",
   "scripts": {
-    "codegen": "lex gen-server ./src/lexicon ../../lexicons/com/atproto/*/* ../../lexicons/app/bsky/*/* ../../lexicons/tools/ozone/*/*",
+    "codegen": "lex gen-server ./src/lexicon ../../lexicons/com/atproto/*/* ../../lexicons/app/bsky/*/* ../../lexicons/chat/bsky/*/* ../../lexicons/tools/ozone/*/*",
     "build": "tsc --build tsconfig.build.json",
     "start": "node --enable-source-maps dist/bin.js",
     "test": "../dev-infra/with-test-redis-and-db.sh jest",
@@ -41,10 +41,12 @@
     "express": "^4.17.2",
     "http-terminator": "^3.2.0",
     "kysely": "^0.22.0",
+    "lande": "^1.0.10",
     "multiformats": "^9.9.0",
     "p-queue": "^6.6.2",
     "pg": "^8.10.0",
     "pino-http": "^8.2.1",
+    "structured-headers": "^1.0.1",
     "typed-emitter": "^2.1.0",
     "uint8arrays": "3.0.0"
   },

@@ -29,7 +29,14 @@
       },
       "output": {
         "encoding": "application/vnd.ipld.car"
-      }
+      },
+      "errors": [
+        { "name": "RecordNotFound" },
+        { "name": "RepoNotFound" },
+        { "name": "RepoTakendown" },
+        { "name": "RepoSuspended" },
+        { "name": "RepoDeactivated" }
+      ]
     }
   }
 }

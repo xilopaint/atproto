@@ -7,6 +7,7 @@ import cors from 'cors'
 import compression from 'compression'
 import AtpAgent from '@atproto/api'
 import { IdResolver } from '@atproto/identity'
+import { DAY, SECOND } from '@atproto/common'
 import API, { health, wellKnown, blobResolver } from './api'
 import * as error from './error'
 import { loggerMiddleware } from './logger'
@@ -48,7 +49,7 @@ export class BskyAppView {
   }): BskyAppView {
     const { config, signingKey } = opts
     const app = express()
-    app.use(cors())
+    app.use(cors({ maxAge: DAY / SECOND }))
     app.use(loggerMiddleware)
     app.use(compression())
 
@@ -74,6 +75,17 @@ export class BskyAppView {
     const searchAgent = config.searchUrl
       ? new AtpAgent({ service: config.searchUrl })
       : undefined
+
+    const suggestionsAgent = config.suggestionsUrl
+      ? new AtpAgent({ service: config.suggestionsUrl })
+      : undefined
+    if (suggestionsAgent && config.suggestionsApiKey) {
+      suggestionsAgent.api.setHeader(
+        'authorization',
+        `Bearer ${config.suggestionsApiKey}`,
+      )
+    }
+
     const dataplane = createDataPlaneClient(config.dataplaneUrls, {
       httpVersion: config.dataplaneHttpVersion,
       rejectUnauthorized: !config.dataplaneIgnoreBadTls,
@@ -99,6 +111,7 @@ export class BskyAppView {
 
     const authVerifier = new AuthVerifier(dataplane, {
       ownDid: config.serverDid,
+      alternateAudienceDids: config.alternateAudienceDids,
       modServiceDid: config.modServiceDid,
       adminPasses: config.adminPasswords,
     })
@@ -107,6 +120,7 @@ export class BskyAppView {
       cfg: config,
       dataplane,
       searchAgent,
+      suggestionsAgent,
       hydrator,
       views,
       signingKey,
