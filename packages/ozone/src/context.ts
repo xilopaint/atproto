@@ -1,3 +1,4 @@
+import express from 'express'
 import * as plc from '@did-plc/lib'
 import { IdResolver } from '@atproto/identity'
 import { AtpAgent } from '@atproto/api'
@@ -17,13 +18,21 @@ import {
 import { BlobDiverter } from './daemon/blob-diverter'
 import { AuthVerifier } from './auth-verifier'
 import { ImageInvalidator } from './image-invalidator'
-import { getSigningKeyId } from './util'
+import { TeamService, TeamServiceCreator } from './team'
+import {
+  defaultLabelerHeader,
+  getSigningKeyId,
+  LABELER_HEADER_NAME,
+  ParsedLabelers,
+  parseLabelerHeader,
+} from './util'
 
 export type AppContextOptions = {
   db: Database
   cfg: OzoneConfig
   modService: ModerationServiceCreator
   communicationTemplateService: CommunicationTemplateServiceCreator
+  teamService: TeamServiceCreator
   appviewAgent: AtpAgent
   pdsAgent: AtpAgent | undefined
   chatAgent: AtpAgent | undefined
@@ -100,15 +109,14 @@ export class AppContext {
     )
 
     const communicationTemplateService = CommunicationTemplateService.creator()
+    const teamService = TeamService.creator()
 
     const sequencer = new Sequencer(modService(db))
 
     const authVerifier = new AuthVerifier(idResolver, {
       serviceDid: cfg.service.did,
-      admins: cfg.access.admins,
-      moderators: cfg.access.moderators,
-      triage: cfg.access.triage,
       adminPassword: secrets.adminPassword,
+      teamService: teamService(db),
     })
 
     return new AppContext(
@@ -117,6 +125,7 @@ export class AppContext {
         cfg,
         modService,
         communicationTemplateService,
+        teamService,
         appviewAgent,
         pdsAgent,
         chatAgent,
@@ -159,6 +168,10 @@ export class AppContext {
 
   get communicationTemplateService(): CommunicationTemplateServiceCreator {
     return this.opts.communicationTemplateService
+  }
+
+  get teamService(): TeamServiceCreator {
+    return this.opts.teamService
   }
 
   get appviewAgent(): AtpAgent {
@@ -233,6 +246,18 @@ export class AppContext {
       ...this.opts,
       ...overrides,
     }
+  }
+
+  reqLabelers(req: express.Request): ParsedLabelers {
+    const val = req.header(LABELER_HEADER_NAME)
+    let parsed: ParsedLabelers | null
+    try {
+      parsed = parseLabelerHeader(val, this.cfg.service.did)
+    } catch (err) {
+      parsed = null
+    }
+    if (!parsed) return defaultLabelerHeader([])
+    return parsed
   }
 }
 export default AppContext

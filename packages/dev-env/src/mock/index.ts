@@ -1,7 +1,7 @@
 import { AtUri } from '@atproto/syntax'
 import AtpAgent, { COM_ATPROTO_MODERATION } from '@atproto/api'
 import { Database } from '@atproto/bsky'
-import { EXAMPLE_LABELER, TestNetwork } from '../index'
+import { EXAMPLE_LABELER, RecordRef, TestNetwork } from '../index'
 import { postTexts, replyTexts } from './data'
 import labeledImgB64 from './img/labeled-img-b64'
 import blurHashB64 from './img/blur-hash-avatar-b64'
@@ -95,13 +95,13 @@ export async function generateMockSetup(env: TestNetwork) {
       handle: 'triage.test',
       password: 'triage-pass',
     })
-  env.ozone.addAdminDid(triageRes.data.did)
+  await env.ozone.addTriageDid(triageRes.data.did)
   const modRes = await clients.loggedout.api.com.atproto.server.createAccount({
     email: 'mod@test.com',
     handle: 'mod.test',
     password: 'mod-pass',
   })
-  env.ozone.addAdminDid(modRes.data.did)
+  await env.ozone.addModeratorDid(modRes.data.did)
   const adminRes = await clients.loggedout.api.com.atproto.server.createAccount(
     {
       email: 'admin-mod@test.com',
@@ -109,7 +109,7 @@ export async function generateMockSetup(env: TestNetwork) {
       password: 'admin-mod-pass',
     },
   )
-  env.ozone.addAdminDid(adminRes.data.did)
+  await env.ozone.addAdminDid(adminRes.data.did)
 
   // Report one user
   const reporter = picka(users)
@@ -478,6 +478,44 @@ export async function generateMockSetup(env: TestNetwork) {
       val: 'spam',
       src: res.data.did,
     })
+  }
+
+  // Create lists and add people to the lists
+  {
+    const flowerLovers = await alice.agent.api.app.bsky.graph.list.create(
+      { repo: alice.did },
+      {
+        name: 'Flower Lovers',
+        purpose: 'app.bsky.graph.defs#curatelist',
+        createdAt: new Date().toISOString(),
+        description: 'A list of posts about flowers',
+      },
+    )
+    const labelHaters = await bob.agent.api.app.bsky.graph.list.create(
+      { repo: bob.did },
+      {
+        name: 'Label Haters',
+        purpose: 'app.bsky.graph.defs#modlist',
+        createdAt: new Date().toISOString(),
+        description: 'A list of people who hate labels',
+      },
+    )
+    await alice.agent.api.app.bsky.graph.listitem.create(
+      { repo: alice.did },
+      {
+        subject: bob.did,
+        createdAt: new Date().toISOString(),
+        list: new RecordRef(flowerLovers.uri, flowerLovers.cid).uriStr,
+      },
+    )
+    await bob.agent.api.app.bsky.graph.listitem.create(
+      { repo: bob.did },
+      {
+        subject: alice.did,
+        createdAt: new Date().toISOString(),
+        list: new RecordRef(labelHaters.uri, labelHaters.cid).uriStr,
+      },
+    )
   }
 }
 

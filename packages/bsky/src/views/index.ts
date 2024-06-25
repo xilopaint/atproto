@@ -2,6 +2,7 @@ import { AtUri, INVALID_HANDLE, normalizeDatetimeAlways } from '@atproto/syntax'
 import { mapDefined } from '@atproto/common'
 import { ImageUriBuilder } from '../image/uri'
 import { HydrationState } from '../hydration/hydrator'
+import { ProfileViewerState as HydratorProfileViewerState } from '../hydration/actor'
 import { ids } from '../lexicon/lexicons'
 import {
   ProfileViewDetailed,
@@ -22,7 +23,12 @@ import {
   isPostView,
 } from '../lexicon/types/app/bsky/feed/defs'
 import { isRecord as isPostRecord } from '../lexicon/types/app/bsky/feed/post'
-import { ListView, ListViewBasic } from '../lexicon/types/app/bsky/graph/defs'
+import {
+  ListView,
+  ListViewBasic,
+  StarterPackView,
+  StarterPackViewBasic,
+} from '../lexicon/types/app/bsky/graph/defs'
 import { creatorFromUri, parseThreadGate, cidFromBlobJson } from './util'
 import { isListRule } from '../lexicon/types/app/bsky/feed/threadgate'
 import { isSelfLabels } from '../lexicon/types/com/atproto/label/defs'
@@ -63,8 +69,21 @@ export class Views {
   // Actor
   // ------------
 
+  actorIsNoHosted(did: string, state: HydrationState): boolean {
+    return (
+      this.actorIsDeactivated(did, state) || this.actorIsTakendown(did, state)
+    )
+  }
+
+  actorIsDeactivated(did: string, state: HydrationState): boolean {
+    if (state.actors?.get(did)?.upstreamStatus === 'deactivated') return true
+    return false
+  }
+
   actorIsTakendown(did: string, state: HydrationState): boolean {
     if (state.actors?.get(did)?.takedownRef) return true
+    if (state.actors?.get(did)?.upstreamStatus === 'takendown') return true
+    if (state.actors?.get(did)?.upstreamStatus === 'suspended') return true
     if (state.labels?.get(did)?.isTakendown) return true
     return false
   }
@@ -94,9 +113,19 @@ export class Views {
     if (!actor) return
     const baseView = this.profile(did, state)
     if (!baseView) return
+    const knownFollowersSkeleton = state.knownFollowers?.get(did)
+    const knownFollowers = knownFollowersSkeleton
+      ? this.knownFollowers(knownFollowersSkeleton, state)
+      : undefined
     const profileAggs = state.profileAggs?.get(did)
     return {
       ...baseView,
+      viewer: baseView.viewer
+        ? {
+            ...baseView.viewer,
+            knownFollowers,
+          }
+        : undefined,
       banner: actor.profile?.banner
         ? this.imgUriBuilder.getPresetUri(
             'banner',
@@ -110,12 +139,16 @@ export class Views {
       associated: {
         lists: profileAggs?.lists,
         feedgens: profileAggs?.feeds,
+        starterPacks: profileAggs?.starterPacks,
         labeler: actor.isLabeler,
         // @TODO apply default chat policy?
         chat: actor.allowIncomingChatsFrom
           ? { allowIncoming: actor.allowIncomingChatsFrom }
           : undefined,
       },
+      joinedViaStarterPack: actor.profile?.joinedViaStarterPack
+        ? this.starterPackBasic(actor.profile.joinedViaStarterPack.uri, state)
+        : undefined,
     }
   }
 
@@ -176,6 +209,7 @@ export class Views {
           : undefined,
       viewer: this.profileViewer(did, state),
       labels,
+      createdAt: actor.createdAt?.toISOString(),
     }
   }
 
@@ -201,6 +235,19 @@ export class Views {
       following: viewer.following && !block ? viewer.following : undefined,
       followedBy: viewer.followedBy && !block ? viewer.followedBy : undefined,
     }
+  }
+
+  knownFollowers(
+    knownFollowers: Required<HydratorProfileViewerState>['knownFollowers'],
+    state: HydrationState,
+  ) {
+    const followers = mapDefined(knownFollowers.followers, (did) => {
+      if (this.viewerBlockExists(did, state)) {
+        return undefined
+      }
+      return this.profileBasic(did, state)
+    })
+    return { count: knownFollowers.count, followers }
   }
 
   blockedProfileViewer(
@@ -243,6 +290,7 @@ export class Views {
     if (!list) {
       return undefined
     }
+    const listAgg = state.listAggs?.get(uri)
     const listViewer = state.listViewers?.get(uri)
     const labels = state.labels?.getBySubject(uri) ?? []
     const creator = new AtUri(uri).hostname
@@ -258,6 +306,7 @@ export class Views {
             cidFromBlobJson(list.record.avatar),
           )
         : undefined,
+      listItemCount: listAgg?.listItems ?? 0,
       indexedAt: list.sortedAt.toISOString(),
       labels,
       viewer: listViewer
@@ -266,6 +315,53 @@ export class Views {
             blocked: listViewer.viewerListBlockUri,
           }
         : undefined,
+    }
+  }
+
+  starterPackBasic(
+    uri: string,
+    state: HydrationState,
+  ): StarterPackViewBasic | undefined {
+    const sp = state.starterPacks?.get(uri)
+    if (!sp) return
+    const parsedUri = new AtUri(uri)
+    const creator = this.profileBasic(parsedUri.hostname, state)
+    if (!creator) return
+    const agg = state.starterPackAggs?.get(uri)
+    const labels = state.labels?.getBySubject(uri) ?? []
+    return {
+      uri,
+      cid: sp.cid,
+      record: sp.record,
+      creator,
+      joinedAllTimeCount: agg?.joinedAllTime ?? 0,
+      joinedWeekCount: agg?.joinedWeek ?? 0,
+      labels,
+      indexedAt: sp.sortedAt.toISOString(),
+    }
+  }
+
+  starterPack(uri: string, state: HydrationState): StarterPackView | undefined {
+    const sp = state.starterPacks?.get(uri)
+    const basicView = this.starterPackBasic(uri, state)
+    if (!sp || !basicView) return
+    const agg = state.starterPackAggs?.get(uri)
+    const feeds = mapDefined(sp.record.feeds ?? [], (feed) =>
+      this.feedGenerator(feed.uri, state),
+    )
+    const list = this.listBasic(sp.record.list, state)
+    const listItemsSample = mapDefined(agg?.listItemSampleUris ?? [], (uri) => {
+      const li = state.listItems?.get(uri)
+      if (!li) return
+      const subject = this.profile(li.record.subject, state)
+      if (!subject) return
+      return { uri, subject }
+    })
+    return {
+      ...basicView,
+      feeds,
+      list,
+      listItemsSample,
     }
   }
 
@@ -463,6 +559,7 @@ export class Views {
         ? {
             repost: viewer.repost,
             like: viewer.like,
+            threadMuted: viewer.threadMuted,
             replyDisabled: this.userReplyDisabled(uri, state),
           }
         : undefined,
@@ -927,6 +1024,17 @@ export class Views {
       recordInfo = state.reposts?.get(notif.uri)
     } else if (uri.collection === ids.AppBskyGraphFollow) {
       recordInfo = state.follows?.get(notif.uri)
+    } else if (uri.collection === ids.AppBskyActorProfile) {
+      const actor = state.actors?.get(authorDid)
+      recordInfo =
+        actor && actor.profile && actor.profileCid && actor.sortedAt
+          ? {
+              record: actor.profile,
+              cid: actor.profileCid,
+              sortedAt: actor.sortedAt,
+              takedownRef: actor.profileTakedownRef,
+            }
+          : null
     }
     if (!recordInfo) return
     const labels = state.labels?.getBySubject(notif.uri) ?? []

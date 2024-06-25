@@ -26,6 +26,7 @@ import * as ListItem from './plugins/list-item'
 import * as ListBlock from './plugins/list-block'
 import * as Block from './plugins/block'
 import * as FeedGenerator from './plugins/feed-generator'
+import * as StarterPack from './plugins/starter-pack'
 import * as Labeler from './plugins/labeler'
 import * as ChatDeclaration from './plugins/chat-declaration'
 import RecordProcessor from './processor'
@@ -46,6 +47,7 @@ export class IndexingService {
     listBlock: ListBlock.PluginType
     block: Block.PluginType
     feedGenerator: FeedGenerator.PluginType
+    starterPack: StarterPack.PluginType
     labeler: Labeler.PluginType
     chatDeclaration: ChatDeclaration.PluginType
   }
@@ -67,6 +69,7 @@ export class IndexingService {
       listBlock: ListBlock.makePlugin(this.db, this.background),
       block: Block.makePlugin(this.db, this.background),
       feedGenerator: FeedGenerator.makePlugin(this.db, this.background),
+      starterPack: StarterPack.makePlugin(this.db, this.background),
       labeler: Labeler.makePlugin(this.db, this.background),
       chatDeclaration: ChatDeclaration.makePlugin(this.db, this.background),
     }
@@ -267,7 +270,23 @@ export class IndexingService {
     return indexers.find((indexer) => indexer.collection === collection)
   }
 
-  async tombstoneActor(did: string) {
+  async updateActorStatus(did: string, active: boolean, status: string = '') {
+    let upstreamStatus: string | null
+    if (active) {
+      upstreamStatus = null
+    } else if (['deactivated', 'suspended', 'takendown'].includes(status)) {
+      upstreamStatus = status
+    } else {
+      throw new Error(`Unrecognized account status: ${status}`)
+    }
+    await this.db.db
+      .updateTable('actor')
+      .set({ upstreamStatus })
+      .where('did', '=', did)
+      .execute()
+  }
+
+  async deleteActor(did: string) {
     this.db.assertNotTransaction()
     const actorIsHosted = await this.getActorIsHosted(did)
     if (actorIsHosted === false) {
