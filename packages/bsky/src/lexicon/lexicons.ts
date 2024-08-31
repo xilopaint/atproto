@@ -4733,37 +4733,6 @@ export const schemaDict = {
       },
     },
   },
-  AppBskyFeedPinPost: {
-    lexicon: 1,
-    id: 'app.bsky.feed.pinPost',
-    defs: {
-      main: {
-        type: 'procedure',
-        description:
-          'Pin a post to the profile of the requesting account. Requires auth.',
-        input: {
-          encoding: 'application/json',
-          schema: {
-            type: 'object',
-            required: ['subject'],
-            properties: {
-              subject: {
-                type: 'ref',
-                ref: 'lex:com.atproto.repo.strongRef',
-              },
-            },
-          },
-        },
-        output: {
-          encoding: 'application/json',
-          schema: {
-            type: 'object',
-            properties: {},
-          },
-        },
-      },
-    },
-  },
   AppBskyActorProfile: {
     lexicon: 1,
     id: 'app.bsky.actor.profile',
@@ -5485,7 +5454,10 @@ export const schemaDict = {
           },
           reason: {
             type: 'union',
-            refs: ['lex:app.bsky.feed.defs#reasonRepost'],
+            refs: [
+              'lex:app.bsky.feed.defs#reasonRepost',
+              'lex:app.bsky.feed.defs#reasonPin',
+            ],
           },
           feedContext: {
             type: 'string',
@@ -5536,6 +5508,10 @@ export const schemaDict = {
             format: 'datetime',
           },
         },
+      },
+      reasonPin: {
+        type: 'object',
+        properties: {},
       },
       threadViewPost: {
         type: 'object',
@@ -5694,7 +5670,10 @@ export const schemaDict = {
           },
           reason: {
             type: 'union',
-            refs: ['lex:app.bsky.feed.defs#skeletonReasonRepost'],
+            refs: [
+              'lex:app.bsky.feed.defs#skeletonReasonRepost',
+              'lex:app.bsky.feed.defs#skeletonReasonPin',
+            ],
           },
           feedContext: {
             type: 'string',
@@ -5713,6 +5692,10 @@ export const schemaDict = {
             format: 'at-uri',
           },
         },
+      },
+      skeletonReasonPin: {
+        type: 'object',
+        properties: {},
       },
       threadgateView: {
         type: 'object',
@@ -6078,6 +6061,10 @@ export const schemaDict = {
                 'posts_and_author_threads',
               ],
               default: 'posts_with_replies',
+            },
+            includePins: {
+              type: 'boolean',
+              default: false,
             },
           },
         },
@@ -10576,7 +10563,6 @@ export const ids = {
   AppBskyActorGetProfile: 'app.bsky.actor.getProfile',
   AppBskyActorGetProfiles: 'app.bsky.actor.getProfiles',
   AppBskyActorGetSuggestions: 'app.bsky.actor.getSuggestions',
-  AppBskyFeedPinPost: 'app.bsky.feed.pinPost',
   AppBskyActorProfile: 'app.bsky.actor.profile',
   AppBskyActorPutPreferences: 'app.bsky.actor.putPreferences',
   AppBskyActorSearchActors: 'app.bsky.actor.searchActors',
