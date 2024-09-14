@@ -203,19 +203,36 @@ export function string(
 
   // maxLength
   if (typeof def.maxLength === 'number') {
-    const len = cachedUtf8Len ?? (cachedUtf8Len = utf8Len(value))
-    if (len > def.maxLength) {
-      return {
-        success: false,
-        error: new ValidationError(
-          `${path} must not be longer than ${def.maxLength} characters`,
-        ),
+    if (value.length * 3 <= def.maxLength) {
+      // If the JavaScript string length * 3 is within the maximum limit,
+      // its UTF8 length (which <= .length * 3) will also be within.
+      // Skip validation.
+    } else {
+      const len = cachedUtf8Len ?? (cachedUtf8Len = utf8Len(value))
+      if (len > def.maxLength) {
+        return {
+          success: false,
+          error: new ValidationError(
+            `${path} must not be longer than ${def.maxLength} characters`,
+          ),
+        }
       }
     }
   }
 
   // minLength
   if (typeof def.minLength === 'number') {
+    if (value.length * 3 < def.minLength) {
+      // If the JavaScript string length * 3 is below the maximum limit,
+      // its UTF8 length (which <= .length * 3) will also be below.
+      // Fail early.
+      return {
+        success: false,
+        error: new ValidationError(
+          `${path} must not be shorter than ${def.minLength} characters`,
+        ),
+      }
+    }
     const len = cachedUtf8Len ?? (cachedUtf8Len = utf8Len(value))
     if (len < def.minLength) {
       return {
