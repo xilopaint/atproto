@@ -1,5 +1,13 @@
 # @atproto/identity
 
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [[`a07b21151`](https://github.com/bluesky-social/atproto/commit/a07b21151f1850340c4b7797ebb11521b1a6cdf3), [`a07b21151`](https://github.com/bluesky-social/atproto/commit/a07b21151f1850340c4b7797ebb11521b1a6cdf3)]:
+  - @atproto/common-web@0.3.1
+  - @atproto/crypto@0.4.1
+
 ## 0.4.1
 
 ### Patch Changes
